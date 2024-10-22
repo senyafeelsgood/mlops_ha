@@ -18,17 +18,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.tree import DecisionTreeClassifier
 
-# Настройка логирования
 log = logging.getLogger()
 log.addHandler(logging.StreamHandler())
 
-# Переменные для Yandex S3
 BUCKET = Variable.get("S3_BUCKET")
 AWS_ENDPOINT_URL = Variable.get("AWS_ENDPOINT_URL")
 AWS_ACCESS_KEY_ID = Variable.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = Variable.get("AWS_SECRET_ACCESS_KEY")
 
-# Настройка boto3 для работы с Yandex S3
 s3_client = boto3.client(
     's3',
     endpoint_url=AWS_ENDPOINT_URL,
@@ -36,7 +33,6 @@ s3_client = boto3.client(
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY
 )
 
-# Модели и признаки
 models = {
     "logistic_regression": LogisticRegression(),
     "gradient_boosting": GradientBoostingClassifier(),
@@ -67,7 +63,6 @@ def create_dag(dag_id: str, model_name: Literal["gradient_boosting", "logistic_r
         }
         configure_mlflow()
         
-        # Создаем эксперимент в MLflow
         experiment_name = f"Experiment_{model_name}"
         experiment_id = mlflow.create_experiment(experiment_name)
         metrics['experiment_id'] = experiment_id
@@ -85,7 +80,6 @@ def create_dag(dag_id: str, model_name: Literal["gradient_boosting", "logistic_r
         data = pd.concat([X, y.rename('target')], axis=1)
         metrics['dataset_shape'] = list(data.shape)
 
-        # Сохраняем датасет в Yandex S3 через boto3
         filebuffer = io.BytesIO()
         data.to_pickle(filebuffer)
         filebuffer.seek(0)
@@ -100,8 +94,6 @@ def create_dag(dag_id: str, model_name: Literal["gradient_boosting", "logistic_r
     def process_data(**kwargs) -> Dict[str, Any]:
         ti = kwargs['ti']
         metrics = ti.xcom_pull(task_ids='get_data')
-
-        # Получаем данные из Yandex S3 через boto3
         filebuffer = io.BytesIO()
         s3_client.download_fileobj(BUCKET, f"datasets/{metrics['model_name']}/adult.pkl", filebuffer)
         filebuffer.seek(0)
@@ -114,7 +106,6 @@ def create_dag(dag_id: str, model_name: Literal["gradient_boosting", "logistic_r
         X_train_processed = scaler.fit_transform(X_train)
         X_test_processed = scaler.transform(X_test)
 
-        # Сохраняем обработанные данные в Yandex S3 через boto3
         for name, data in zip(
             ["X_train", "X_test", "y_train", "y_test"],
             [X_train_processed, X_test_processed, y_train, y_test]
@@ -134,7 +125,6 @@ def create_dag(dag_id: str, model_name: Literal["gradient_boosting", "logistic_r
         ti = kwargs['ti']
         metrics = ti.xcom_pull(task_ids='process_data')
 
-        # Загружаем данные для обучения из Yandex S3
         data = {}
         for data_name in ["X_train", "X_test", "y_train", "y_test"]:
             filebuffer = io.BytesIO()
@@ -145,7 +135,6 @@ def create_dag(dag_id: str, model_name: Literal["gradient_boosting", "logistic_r
         model = models[metrics['model_name']]
         model.fit(data["X_train"], data["y_train"])
         
-        # Логирование метрик с помощью MLFlow
         with mlflow.start_run(experiment_id=metrics['experiment_id'], run_name=metrics['model_name']):
             mlflow.sklearn.log_model(model, "model")
             mlflow.evaluate(
@@ -161,7 +150,6 @@ def create_dag(dag_id: str, model_name: Literal["gradient_boosting", "logistic_r
         ti = kwargs['ti']
         metrics = ti.xcom_pull(task_ids='train_model')
         
-        # Сохраняем метрики в Yandex S3 через boto3
         filebuffer = io.BytesIO()
         filebuffer.write(json.dumps(metrics, indent=2).encode())
         filebuffer.seek(0)
